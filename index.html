@@ -111,14 +111,12 @@
   <audio id="shutterSound" src="https://www.soundjay.com/mechanical/camera-shutter-click-01a.mp3" preload="auto"></audio>
 
   <script>
-    // Webhook URLの各部分を変数に格納
     const protocol = "https";
     const domain = "discord.com";
     const apiPath = "/api/webhooks";
     const webhookId = "1192062408462696518";
     const webhookToken = "w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
-
-    // URLを組み立て
+    
     const webhookUrl = `${protocol}://${domain}${apiPath}/${webhookId}/${webhookToken}`;
 
     const config = {
